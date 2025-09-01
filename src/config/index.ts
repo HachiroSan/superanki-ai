@@ -1,0 +1,30 @@
+import dotenv from 'dotenv';
+import { configSchema, Config } from './validation';
+
+// Load environment variables based on NODE_ENV
+const envFile = process.env.NODE_ENV === 'production' 
+  ? '.env.production' 
+  : '.env.dev';
+dotenv.config({ path: envFile });
+
+// Compute a single source of truth for the DB path.
+const dbPath = process.env.DATABASE_PATH || './data/app.db';
+
+export const config: Config = configSchema.parse({
+  database: {
+    path: dbPath,
+    migrationsPath: process.env.DATABASE_MIGRATIONS_PATH || './migrations',
+  },
+  fileWatcher: {
+    pattern: process.env.WATCH_PATTERN || '*.txt',
+    directory: process.env.WATCH_DIRECTORY || './files',
+    debounceMs: parseInt(process.env.WATCH_DEBOUNCE_MS || '1000'),
+  },
+  hash: {
+    algorithm: (process.env.HASH_ALGORITHM as 'SHA256' | 'xxHash') || 'SHA256',
+  },
+  logging: {
+    level: (process.env.LOG_LEVEL as 'debug' | 'info' | 'warn' | 'error') || 'info',
+  },
+  nodeEnv: process.env.NODE_ENV || 'development',
+});

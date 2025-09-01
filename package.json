@@ -1,0 +1,36 @@
+{
+  "name": "superanki-ai",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "dev": "NODE_ENV=development tsx src/index.ts",
+    "build": "tsc",
+    "start": "NODE_ENV=production node dist/index.js",
+    "test": "npx jest",
+    "test:watch": "npx jest --watch",
+    "test:coverage": "npx jest --coverage",
+    "test:ci": "npx jest --ci --coverage --watchAll=false",
+    "process-digest": "NODE_ENV=development tsx src/cli/process-digest.ts",
+    "query-digest": "NODE_ENV=development tsx src/cli/query-digest.ts",
+    "backup-digest": "NODE_ENV=development tsx src/cli/backup-digest.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "chokidar": "^3.5.3",
+    "dotenv": "^16.3.1",
+    "sqlite3": "^5.1.6",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24.3.0",
+    "@types/sqlite3": "^3.1.8",
+    "jest": "^30.1.2",
+    "ts-jest": "^29.4.1",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2"
+  }
+}
