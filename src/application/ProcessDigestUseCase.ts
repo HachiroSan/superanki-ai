@@ -9,7 +9,8 @@ export class ProcessDigestUseCase {
     private digestParser: DigestParser
   ) {}
 
-  async execute(filePath: string): Promise<void> {
+  // Returns parsed entries for downstream pipeline stages (e.g., LLM enrichment)
+  async execute(filePath: string): Promise<DigestEntry[]> {
     try {
       console.log(`Processing digest file: ${filePath}`);
       
@@ -27,6 +28,7 @@ export class ProcessDigestUseCase {
       }
       
       console.log(`Successfully processed digest file: ${filePath}`);
+      return entries;
     } catch (error) {
       console.error(`Error processing digest file ${filePath}:`, error);
       throw error;

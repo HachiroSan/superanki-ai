@@ -17,6 +17,13 @@ export const configSchema = z.object({
     level: z.enum(['debug', 'info', 'warn', 'error']),
   }),
   nodeEnv: z.string(),
+  llm: z.object({
+    enabled: z.boolean().default(false),
+    provider: z.string().default('openai'),
+    model: z.string().default('gpt-4o-mini'),
+    batchSize: z.number().min(1).max(100).default(20),
+    concurrency: z.number().min(1).max(10).default(2),
+  }),
 });
 
 export type Config = z.infer<typeof configSchema>;

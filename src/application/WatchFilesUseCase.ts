@@ -4,13 +4,15 @@ import { FileWatcher } from '../core/services/FileWatcher';
 import { HashService } from '../core/services/HashService';
 import { ProcessDigestUseCase } from './ProcessDigestUseCase';
 import { config } from '../config';
+import { EnrichMissingUseCase } from './EnrichMissingUseCase';
 
 export class WatchFilesUseCase {
   constructor(
     private fileRepository: FileRepository,
     private fileWatcher: FileWatcher,
     private hashService: HashService,
-    private processDigestUseCase: ProcessDigestUseCase
+    private processDigestUseCase: ProcessDigestUseCase,
+    private enrichMissingUseCase?: EnrichMissingUseCase
   ) {}
 
   async execute(): Promise<void> {
@@ -55,7 +57,11 @@ export class WatchFilesUseCase {
 
           // Process all watched text files on change
           console.log(`Processing updated text file for vocabulary: ${filePath}`);
-          await this.processDigestUseCase.execute(filePath);
+          const entries = await this.processDigestUseCase.execute(filePath);
+          if (this.enrichMissingUseCase && entries.length > 0 && config.llm.enabled) {
+            console.log(`Enriching ${entries.length} entries via LLM (if missing)...`);
+            await this.enrichMissingUseCase.executeForEntries(entries);
+          }
         } else {
           console.log(`File unchanged: ${filePath}`);
         }
@@ -74,7 +80,11 @@ export class WatchFilesUseCase {
 
         // Process all watched text files on add
         console.log(`Processing new text file for vocabulary: ${filePath}`);
-        await this.processDigestUseCase.execute(filePath);
+        const entries = await this.processDigestUseCase.execute(filePath);
+        if (this.enrichMissingUseCase && entries.length > 0 && config.llm.enabled) {
+          console.log(`Enriching ${entries.length} entries via LLM (if missing)...`);
+          await this.enrichMissingUseCase.executeForEntries(entries);
+        }
       }
     } catch (error) {
       console.error(`Error processing file ${filePath}:`, error);

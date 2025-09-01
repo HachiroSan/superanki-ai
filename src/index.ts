@@ -6,6 +6,9 @@ import { SupernoteDigestParser } from './core/services/DigestParser';
 import { WatchFilesUseCase } from './application/WatchFilesUseCase';
 import { ProcessDigestUseCase } from './application/ProcessDigestUseCase';
 import { config } from './config';
+import { SQLiteEnrichedCardRepository } from './adapters/database/SQLiteEnrichedCardRepository';
+import { NoopEnricher } from './adapters/llm/NoopEnricher';
+import { EnrichMissingUseCase } from './application/EnrichMissingUseCase';
 
 async function main() {
   try {
@@ -26,11 +29,23 @@ async function main() {
       digestParser       // DigestParser interface
     );
 
+    // Optional third stage: LLM enrichment
+    let enrichMissingUseCase: EnrichMissingUseCase | undefined;
+    if (config.llm.enabled) {
+      const enrichedRepo = new SQLiteEnrichedCardRepository();
+      const enricher = new NoopEnricher(); // Replace with real implementation (e.g., OpenAI)
+      enrichMissingUseCase = new EnrichMissingUseCase(enrichedRepo, enricher, {
+        batchSize: config.llm.batchSize,
+        concurrency: config.llm.concurrency,
+      });
+    }
+
     const watchFilesUseCase = new WatchFilesUseCase(
       fileRepository,           // FileRepository interface
       fileWatcher,              // FileWatcher interface
       hashService,              // HashService interface
-      processDigestUseCase      // ProcessDigestUseCase
+      processDigestUseCase,     // ProcessDigestUseCase
+      enrichMissingUseCase      // optional EnrichMissingUseCase
     );
 
     // Start watching files

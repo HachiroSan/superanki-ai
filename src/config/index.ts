@@ -27,4 +27,11 @@ export const config: Config = configSchema.parse({
     level: (process.env.LOG_LEVEL as 'debug' | 'info' | 'warn' | 'error') || 'info',
   },
   nodeEnv: process.env.NODE_ENV || 'development',
+  llm: {
+    enabled: (process.env.LLM_ENABLED || 'false').toLowerCase() === 'true',
+    provider: process.env.LLM_PROVIDER || 'openai',
+    model: process.env.LLM_MODEL || 'gpt-4o-mini',
+    batchSize: parseInt(process.env.LLM_BATCH_SIZE || '20'),
+    concurrency: parseInt(process.env.LLM_CONCURRENCY || '2'),
+  },
 });
