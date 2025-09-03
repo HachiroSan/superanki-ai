@@ -5,6 +5,7 @@ import { HashService } from '../core/services/HashService';
 import { ProcessDigestUseCase } from './ProcessDigestUseCase';
 import { config } from '../config';
 import { EnrichMissingUseCase } from './EnrichMissingUseCase';
+import { Logger } from '../core/services/Logger';
 
 export class WatchFilesUseCase {
   constructor(
@@ -12,13 +13,14 @@ export class WatchFilesUseCase {
     private fileWatcher: FileWatcher,
     private hashService: HashService,
     private processDigestUseCase: ProcessDigestUseCase,
+    private logger: Logger,
     private enrichMissingUseCase?: EnrichMissingUseCase
   ) {}
 
   async execute(): Promise<void> {
-    console.log('Starting file watcher...');
-    console.log(`Watching pattern: ${config.fileWatcher.pattern}`);
-    console.log(`Directory: ${config.fileWatcher.directory}`);
+    this.logger.info('Starting file watcher...');
+    this.logger.info(`Watching pattern: ${config.fileWatcher.pattern}`);
+    this.logger.info(`Directory: ${config.fileWatcher.directory}`);
 
     await this.fileWatcher.watch(
       config.fileWatcher.pattern,
@@ -30,19 +32,24 @@ export class WatchFilesUseCase {
   }
 
   private async handleFileChange(filePath: string): Promise<void> {
+    this.logger.time(`file-change-${filePath.replace(/[^a-zA-Z0-9]/g, '_')}`);
     try {
-      console.log(`Processing file change: ${filePath}`);
+      this.logger.info(`Processing file change: ${filePath}`);
       
       // Compute new hash
+      this.logger.time('compute-hash');
       const newHash = await this.hashService.computeFileHash(filePath);
+      this.logger.timeEnd('compute-hash');
       
       // Check if file exists in repository
+      this.logger.time('check-existing');
       const existingFile = await this.fileRepository.findByPath(filePath);
+      this.logger.timeEnd('check-existing');
       
       if (existingFile) {
         // File exists, check if content changed
         if (existingFile.hasChanged(newHash)) {
-          console.log(`File content changed: ${filePath}`);
+          this.logger.info(`File content changed: ${filePath}`);
           const updatedFile = existingFile.updateHash(newHash);
           // Use upsert semantics to avoid UNIQUE constraint errors
           // on already-tracked files
@@ -53,21 +60,22 @@ export class WatchFilesUseCase {
             // Fallback to save (legacy impls may override save to upsert)
             await this.fileRepository.save(updatedFile);
           }
-          console.log(`Updated file hash: ${filePath}`);
+          this.logger.info(`Updated file hash: ${filePath}`);
 
           // Process all watched text files on change
-          console.log(`Processing updated text file for vocabulary: ${filePath}`);
+          this.logger.info(`Processing updated text file for vocabulary: ${filePath}`);
           const entries = await this.processDigestUseCase.execute(filePath);
           if (this.enrichMissingUseCase && entries.length > 0 && config.llm.enabled) {
-            console.log(`Enriching ${entries.length} entries via LLM (if missing)...`);
-            await this.enrichMissingUseCase.executeForEntries(entries);
+            this.logger.info(`Enriching ${entries.length} entries via LLM (if missing)...`);
+            const result = await this.enrichMissingUseCase.executeForEntries(entries);
+            this.logger.info(`Enrichment completed: ${result.created} new cards created from ${result.requested} requested`);
           }
         } else {
-          console.log(`File unchanged: ${filePath}`);
+          this.logger.debug(`File unchanged: ${filePath}`);
         }
       } else {
         // New file
-        console.log(`New file detected: ${filePath}`);
+        this.logger.info(`New file detected: ${filePath}`);
         const newFile = new File(filePath, newHash, new Date());
         // Prefer upsert to simplify first-write vs update behavior
         // @@ts-expect-error extended method available on concrete repo
@@ -76,24 +84,27 @@ export class WatchFilesUseCase {
         } else {
           await this.fileRepository.save(newFile);
         }
-        console.log(`Saved new file: ${filePath}`);
+        this.logger.info(`Saved new file: ${filePath}`);
 
         // Process all watched text files on add
-        console.log(`Processing new text file for vocabulary: ${filePath}`);
+        this.logger.info(`Processing new text file for vocabulary: ${filePath}`);
         const entries = await this.processDigestUseCase.execute(filePath);
         if (this.enrichMissingUseCase && entries.length > 0 && config.llm.enabled) {
-          console.log(`Enriching ${entries.length} entries via LLM (if missing)...`);
-          await this.enrichMissingUseCase.executeForEntries(entries);
+          this.logger.info(`Enriching ${entries.length} entries via LLM (if missing)...`);
+          const result = await this.enrichMissingUseCase.executeForEntries(entries);
+          this.logger.info(`Enrichment completed: ${result.created} new cards created from ${result.requested} requested`);
         }
       }
     } catch (error) {
-      console.error(`Error processing file ${filePath}:`, error);
+      this.logger.error(`Error processing file ${filePath}:`, error);
+    } finally {
+      this.logger.timeEnd(`file-change-${filePath.replace(/[^a-zA-Z0-9]/g, '_')}`);
     }
   }
 
   async stop(): Promise<void> {
     await this.fileWatcher.stop();
-    console.log('File watcher stopped');
+    this.logger.info('File watcher stopped');
   }
 
   // All watched files (*.txt) are processed for vocabulary extraction.

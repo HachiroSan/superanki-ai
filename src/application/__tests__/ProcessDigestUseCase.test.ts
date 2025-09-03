@@ -2,6 +2,7 @@ import { ProcessDigestUseCase } from '../ProcessDigestUseCase';
 import { DigestRepository } from '../../core/repositories/DigestRepository';
 import { DigestParser } from '../../core/services/DigestParser';
 import { DigestEntry } from '../../core/entities/DigestEntry';
+import { Logger } from '../../core/services/Logger';
 import fs from 'fs/promises';
 
 // Mock fs module
@@ -12,6 +13,7 @@ describe('ProcessDigestUseCase', () => {
   let useCase: ProcessDigestUseCase;
   let mockDigestRepository: jest.Mocked<DigestRepository>;
   let mockDigestParser: jest.Mocked<DigestParser>;
+  let mockLogger: jest.Mocked<Logger>;
 
   beforeEach(() => {
     mockDigestRepository = {
@@ -30,7 +32,17 @@ describe('ProcessDigestUseCase', () => {
       parse: jest.fn(),
     };
 
-    useCase = new ProcessDigestUseCase(mockDigestRepository, mockDigestParser);
+    mockLogger = {
+      debug: jest.fn(),
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+      time: jest.fn(),
+      timeEnd: jest.fn().mockReturnValue(0),
+      timeLog: jest.fn(),
+    };
+
+    useCase = new ProcessDigestUseCase(mockDigestRepository, mockDigestParser, mockLogger);
   });
 
   afterEach(() => {

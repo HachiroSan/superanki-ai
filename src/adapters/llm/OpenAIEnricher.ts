@@ -4,12 +4,14 @@
 import { LLMEnricher } from '../../core/services/LLMEnricher';
 import { EnrichedCard, PartOfSpeech } from '../../core/entities/EnrichedCard';
 import { buildSystemPrompt, buildUserPrompt } from './prompts';
+import { Logger } from '../../core/services/Logger';
 import OpenAI from 'openai';
 
 export class OpenAIEnricher implements LLMEnricher {
   constructor(
     private client: InstanceType<typeof OpenAI>,
     private model: string,
+    private logger: Logger,
     private options: { temperature?: number } = {}
   ) {}
 
@@ -97,19 +99,20 @@ export class OpenAIEnricher implements LLMEnricher {
   async enrich(words: string[], sourceTitle: string): Promise<EnrichedCard[]> {
     if (words.length === 0) return [];
 
-    // Dynamic import to avoid compile-time hard dependency if not used
-    let openai = this.client;
-    if (!openai) {
-      const mod = await import('openai');
-      openai = new mod.default();
-    }
-
-    const system = buildSystemPrompt();
-    const user = buildUserPrompt(sourceTitle, words);
-
-    const jsonSchema = this.getSchema();
-
     try {
+      this.logger.info(`Starting enrichment for ${words.length} words from source: "${sourceTitle}"`);
+      
+      // Dynamic import to avoid compile-time hard dependency if not used
+      let openai = this.client;
+      if (!openai) {
+        const mod = await import('openai');
+        openai = new mod.default();
+      }
+
+      const system = buildSystemPrompt();
+      const user = buildUserPrompt(sourceTitle, words);
+
+      const jsonSchema = this.getSchema();
       // Helper to parse structured output from Responses API payload
       const tryParseFromResponse = (res: any): any | null => {
         const output = res?.output?.[0];
@@ -129,11 +132,22 @@ export class OpenAIEnricher implements LLMEnricher {
 
       // Be generous with output budget; retry once if truncated
       let maxTokens = Math.max(4096, 1000 + 200 * words.length);
-      const maxCap = 8192;
+      const maxCap = 16384;
       let lastError: Error | null = null;
 
       for (let attempt = 0; attempt < 2; attempt++) {
-        const res = await openai.responses.create({
+        this.logger.info(`Making OpenAI API request (attempt ${attempt + 1}/2)...`);
+        this.logger.debug(`Model: ${this.model}, Words: ${words.length}, Max tokens: ${maxTokens}`);
+        this.logger.debug(`Request payload preview: ${user.substring(0, 200)}...`);
+        
+        const startTime = Date.now();
+        
+        // Add timeout wrapper
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('OpenAI API request timed out after 60 seconds')), 60000);
+        });
+        
+        const apiPromise = openai.responses.create({
           model: this.model,
           input: [
             { role: 'system', content: system },
@@ -150,6 +164,13 @@ export class OpenAIEnricher implements LLMEnricher {
           ...(this.options.temperature != null && this.isTemperatureSupported() ? { temperature: this.options.temperature } : {}),
           max_output_tokens: maxTokens,
         });
+        
+        const res = await Promise.race([apiPromise, timeoutPromise]) as any;
+        
+        const duration = Date.now() - startTime;
+        this.logger.info(`OpenAI API response received in ${duration}ms`);
+        this.logger.debug(`Response status: ${res.status}`);
+        this.logger.debug(`Response usage: ${JSON.stringify(res.usage || {})}`);
 
         // Check for refusals
         const output = res.output?.[0];
@@ -174,7 +195,7 @@ export class OpenAIEnricher implements LLMEnricher {
         }
 
         if (!parsed || !Array.isArray(parsed.items)) {
-          console.warn('Failed to parse structured output from OpenAI response');
+          this.logger.warn('Failed to parse structured output from OpenAI response');
           return [];
         }
 
@@ -213,7 +234,21 @@ export class OpenAIEnricher implements LLMEnricher {
       if (lastError) throw lastError;
       return [];
     } catch (error) {
-      console.error('Error calling OpenAI API:', error);
+      this.logger.error(`Error enriching ${words.length} words from source "${sourceTitle}":`, error);
+      
+      // Provide more specific error messages
+      if (error instanceof Error) {
+        if (error.message.includes('timeout')) {
+          this.logger.error('Request timed out - this might be due to network issues or OpenAI API being slow');
+        } else if (error.message.includes('API key')) {
+          this.logger.error('Invalid or missing OpenAI API key');
+        } else if (error.message.includes('quota')) {
+          this.logger.error('OpenAI API quota exceeded');
+        } else if (error.message.includes('rate limit')) {
+          this.logger.error('OpenAI API rate limit exceeded - consider reducing concurrency');
+        }
+      }
+      
       throw error;
     }
   }

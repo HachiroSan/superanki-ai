@@ -4,6 +4,7 @@ import { FileRepository } from '../../core/repositories/FileRepository';
 import { FileWatcher } from '../../core/services/FileWatcher';
 import { HashService } from '../../core/services/HashService';
 import { File } from '../../core/entities/File';
+import { Logger } from '../../core/services/Logger';
 
 // Mock implementations for testing
 const mockFileRepository: jest.Mocked<FileRepository> = {
@@ -29,6 +30,16 @@ const mockProcessDigestUseCase = {
   executeBatch: jest.fn(),
 } as unknown as jest.Mocked<ProcessDigestUseCase>;
 
+const mockLogger: jest.Mocked<Logger> = {
+  debug: jest.fn(),
+  info: jest.fn(),
+  warn: jest.fn(),
+  error: jest.fn(),
+  time: jest.fn(),
+  timeEnd: jest.fn().mockReturnValue(0),
+  timeLog: jest.fn(),
+};
+
 describe('WatchFilesUseCase', () => {
   let useCase: WatchFilesUseCase;
 
@@ -38,7 +49,8 @@ describe('WatchFilesUseCase', () => {
       mockFileRepository,
       mockFileWatcher,
       mockHashService,
-      mockProcessDigestUseCase
+      mockProcessDigestUseCase,
+      mockLogger
     );
   });
 

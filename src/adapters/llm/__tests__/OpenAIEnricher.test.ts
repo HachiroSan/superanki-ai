@@ -1,10 +1,25 @@
 import { OpenAIEnricher } from '../../llm/OpenAIEnricher';
 import { EnrichedCard } from '../../../core/entities/EnrichedCard';
+import { Logger } from '../../../core/services/Logger';
 
 describe('OpenAIEnricher', () => {
+  let mockLogger: jest.Mocked<Logger>;
+
+  beforeEach(() => {
+    mockLogger = {
+      debug: jest.fn(),
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+      time: jest.fn(),
+      timeEnd: jest.fn().mockReturnValue(0),
+      timeLog: jest.fn(),
+    };
+  });
+
   test('returns [] when no words provided', async () => {
     const fakeClient = { responses: { create: jest.fn() } } as any;
-    const enricher = new OpenAIEnricher(fakeClient, 'test-model');
+    const enricher = new OpenAIEnricher(fakeClient, 'test-model', mockLogger);
     const result = await enricher.enrich([], 'Book');
     expect(result).toEqual([]);
     expect(fakeClient.responses.create).not.toHaveBeenCalled();
@@ -54,7 +69,7 @@ describe('OpenAIEnricher', () => {
       },
     } as any;
 
-    const enricher = new OpenAIEnricher(fakeClient, 'test-model');
+    const enricher = new OpenAIEnricher(fakeClient, 'test-model', mockLogger);
     const result = await enricher.enrich(['alpha', 'run'], 'Book A');
 
     expect(fakeClient.responses.create).toHaveBeenCalled();
@@ -101,7 +116,7 @@ describe('OpenAIEnricher', () => {
       },
     } as any;
 
-    const enricher = new OpenAIEnricher(fakeClient, 'test-model');
+    const enricher = new OpenAIEnricher(fakeClient, 'test-model', mockLogger);
     const result = await enricher.enrich(['beta'], 'Book B');
     expect(result).toHaveLength(1);
     expect(result[0].word).toBe('beta');
@@ -151,7 +166,7 @@ describe('OpenAIEnricher', () => {
       },
     } as any;
 
-    const enricher = new OpenAIEnricher(fakeClient, 'test-model');
+    const enricher = new OpenAIEnricher(fakeClient, 'test-model', mockLogger);
     const result = await enricher.enrich(['keep'], 'Book X');
     expect(result).toHaveLength(1);
     expect(result[0].word).toBe('keep');
@@ -176,7 +191,7 @@ describe('OpenAIEnricher', () => {
       },
     } as any;
 
-    const enricher = new OpenAIEnricher(fakeClient, 'test-model');
+    const enricher = new OpenAIEnricher(fakeClient, 'test-model', mockLogger);
     await expect(enricher.enrich(['test'], 'Book')).rejects.toThrow('Model refused to respond');
   });
 
@@ -192,7 +207,7 @@ describe('OpenAIEnricher', () => {
       },
     } as any;
 
-    const enricher = new OpenAIEnricher(fakeClient, 'test-model');
+    const enricher = new OpenAIEnricher(fakeClient, 'test-model', mockLogger);
     await expect(enricher.enrich(['test'], 'Book')).rejects.toThrow('Response incomplete due to max output tokens limit');
   });
 
@@ -203,7 +218,7 @@ describe('OpenAIEnricher', () => {
       },
     } as any;
 
-    const enricher = new OpenAIEnricher(fakeClient, 'test-model');
+    const enricher = new OpenAIEnricher(fakeClient, 'test-model', mockLogger);
     await expect(enricher.enrich(['test'], 'Book')).rejects.toThrow('API Error');
   });
 });

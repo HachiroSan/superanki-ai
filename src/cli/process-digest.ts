@@ -3,6 +3,7 @@
 import { SQLiteDigestRepository } from '../adapters/database/SQLiteDigestRepository';
 import { SupernoteDigestParser } from '../core/services/DigestParser';
 import { ProcessDigestUseCase } from '../application/ProcessDigestUseCase';
+import { ConsoleLogger } from '../adapters/logging/ConsoleLogger';
 import { config } from '../config';
 
 async function processDigestFile(filePath: string) {
@@ -12,9 +13,10 @@ async function processDigestFile(filePath: string) {
     // Create infrastructure adapters
     const digestRepository = new SQLiteDigestRepository();
     const digestParser = new SupernoteDigestParser();
+    const logger = new ConsoleLogger(config.logging.level);
     
     // Create use case
-    const processDigestUseCase = new ProcessDigestUseCase(digestRepository, digestParser);
+    const processDigestUseCase = new ProcessDigestUseCase(digestRepository, digestParser, logger);
     
     // Process the file
     await processDigestUseCase.execute(filePath);

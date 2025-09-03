@@ -1,59 +1,23 @@
 import sqlite3 from 'sqlite3';
 import { DigestEntry } from '../../core/entities/DigestEntry';
 import { DigestRepository } from '../../core/repositories/DigestRepository';
-import { config } from '../../config';
-import fs from 'fs';
-import path from 'path';
+import { DatabaseConnectionManager } from './DatabaseConnectionManager';
 
 export class SQLiteDigestRepository implements DigestRepository {
-  private db: sqlite3.Database;
-  private dbPath: string;
-  private initPromise: Promise<void>;
+  private connectionManager: DatabaseConnectionManager;
 
   constructor(dbPath?: string) {
-    this.dbPath = dbPath || config.database.path || './data/app.db';
-    this.ensureDatabaseDirectory();
-    this.db = new sqlite3.Database(this.dbPath);
-    this.initPromise = this.initDatabase();
+    this.connectionManager = DatabaseConnectionManager.getInstance(dbPath);
   }
 
-  private ensureDatabaseDirectory(): void {
-    const dbDir = path.dirname(this.dbPath);
-    if (!fs.existsSync(dbDir)) {
-      fs.mkdirSync(dbDir, { recursive: true });
-    }
-  }
-
-  private async initDatabase(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      this.db.serialize(() => {
-        // Enable safer durability defaults
-        this.db.run('PRAGMA journal_mode = WAL');
-        this.db.run('PRAGMA synchronous = FULL');
-
-        this.db.run(`
-          CREATE TABLE IF NOT EXISTS digest_entries (
-            word TEXT PRIMARY KEY,
-            book_filename TEXT NOT NULL,
-            source_file TEXT NOT NULL,
-            created_at INTEGER NOT NULL
-          )
-        `, (err) => {
-          if (err) reject(err);
-          else resolve();
-        });
-      });
-    });
-  }
-
-  private async ensureInitialized(): Promise<void> {
-    await this.initPromise;
+  private async getDb(): Promise<sqlite3.Database> {
+    return this.connectionManager.getConnection();
   }
 
   async save(entry: DigestEntry): Promise<void> {
-    await this.ensureInitialized();
+    const db = await this.getDb();
     return new Promise((resolve, reject) => {
-      this.db.run(
+      db.run(
         'INSERT INTO digest_entries (word, book_filename, source_file, created_at) VALUES (?, ?, ?, ?)',
         [entry.word, entry.bookFilename, entry.sourceFile, entry.createdAt.getTime()],
         (err) => {
@@ -65,9 +29,8 @@ export class SQLiteDigestRepository implements DigestRepository {
   }
 
   async saveMany(entries: DigestEntry[]): Promise<void> {
-    await this.ensureInitialized();
+    const db = await this.getDb();
     return new Promise((resolve, reject) => {
-      const db = this.db;
       const stmt = db.prepare(
         'INSERT OR IGNORE INTO digest_entries (word, book_filename, source_file, created_at) VALUES (?, ?, ?, ?)'
       );
@@ -108,9 +71,9 @@ export class SQLiteDigestRepository implements DigestRepository {
 
 
   async findByBook(bookFilename: string): Promise<DigestEntry[]> {
-    await this.ensureInitialized();
+    const db = await this.getDb();
     return new Promise((resolve, reject) => {
-      this.db.all(
+      db.all(
         'SELECT word, book_filename, source_file, created_at FROM digest_entries WHERE book_filename = ?',
         [bookFilename],
         (err, rows: any[]) => {
@@ -129,9 +92,9 @@ export class SQLiteDigestRepository implements DigestRepository {
   }
 
   async findByWord(word: string): Promise<DigestEntry | null> {
-    await this.ensureInitialized();
+    const db = await this.getDb();
     return new Promise((resolve, reject) => {
-      this.db.get(
+      db.get(
         'SELECT word, book_filename, source_file, created_at FROM digest_entries WHERE word = ?',
         [word],
         (err, row: any) => {
@@ -152,9 +115,9 @@ export class SQLiteDigestRepository implements DigestRepository {
   }
 
   async findAll(): Promise<DigestEntry[]> {
-    await this.ensureInitialized();
+    const db = await this.getDb();
     return new Promise((resolve, reject) => {
-      this.db.all(
+      db.all(
         'SELECT word, book_filename, source_file, created_at FROM digest_entries ORDER BY created_at DESC',
         (err, rows: any[]) => {
           if (err) reject(err);
@@ -172,9 +135,9 @@ export class SQLiteDigestRepository implements DigestRepository {
   }
 
   async deleteByWord(word: string): Promise<void> {
-    await this.ensureInitialized();
+    const db = await this.getDb();
     return new Promise((resolve, reject) => {
-      this.db.run(
+      db.run(
         'DELETE FROM digest_entries WHERE word = ?',
         [word],
         (err) => {
@@ -186,15 +149,14 @@ export class SQLiteDigestRepository implements DigestRepository {
   }
 
   async exists(word: string): Promise<boolean> {
-    await this.ensureInitialized();
     const entry = await this.findByWord(word);
     return entry !== null;
   }
 
   async upsert(entry: DigestEntry): Promise<boolean> {
-    await this.ensureInitialized();
+    const db = await this.getDb();
     return new Promise((resolve, reject) => {
-      this.db.run(
+      db.run(
         'INSERT OR IGNORE INTO digest_entries (word, book_filename, source_file, created_at) VALUES (?, ?, ?, ?)',
         [entry.word, entry.bookFilename, entry.sourceFile, entry.createdAt.getTime()],
         function (this: any, err) {
@@ -206,8 +168,7 @@ export class SQLiteDigestRepository implements DigestRepository {
   }
 
   async saveManyIfNew(entries: DigestEntry[]): Promise<number> {
-    await this.ensureInitialized();
-    const db = this.db;
+    const db = await this.getDb();
     return new Promise((resolve, reject) => {
       const stmt = db.prepare(
         'INSERT OR IGNORE INTO digest_entries (word, book_filename, source_file, created_at) VALUES (?, ?, ?, ?)'
@@ -262,11 +223,6 @@ export class SQLiteDigestRepository implements DigestRepository {
   }
 
   close(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      this.db.close((err) => {
-        if (err) reject(err);
-        else resolve();
-      });
-    });
+    return this.connectionManager.close();
   }
 }

@@ -15,6 +15,10 @@ export const configSchema = z.object({
   }),
   logging: z.object({
     level: z.enum(['debug', 'info', 'warn', 'error']),
+    filePath: z.string().optional(),
+    rotate: z.enum(['none', 'daily', 'size']).default('none').optional(),
+    maxSizeMB: z.number().min(1).max(1024).default(10).optional(),
+    maxFiles: z.number().min(1).max(100).default(5).optional(),
   }),
   nodeEnv: z.string(),
   llm: z.object({

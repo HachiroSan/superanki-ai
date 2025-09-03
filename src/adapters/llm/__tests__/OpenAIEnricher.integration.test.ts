@@ -6,6 +6,7 @@
 */
 
 import { OpenAIEnricher } from '../../llm/OpenAIEnricher';
+import { ConsoleLogger } from '../../../adapters/logging/ConsoleLogger';
 import OpenAI from 'openai';
 
 // Ensure longer timeout for this file specifically
@@ -26,7 +27,8 @@ const shouldRun = process.env.RUN_LLM_INTEGRATION === '1' && !!process.env.OPENA
       ...(baseUrl && { baseURL: baseUrl }),
     });
 
-    const enricher = new OpenAIEnricher(client, model, { temperature: 0.2 });
+    const logger = new ConsoleLogger('info');
+    const enricher = new OpenAIEnricher(client, model, logger, { temperature: 0.2 });
     const words = ['serendipity'];
     const sourceTitle = 'Integration Test';
 

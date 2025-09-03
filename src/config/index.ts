@@ -25,6 +25,10 @@ export const config: Config = configSchema.parse({
   },
   logging: {
     level: (process.env.LOG_LEVEL as 'debug' | 'info' | 'warn' | 'error') || 'info',
+    filePath: process.env.LOG_FILE || undefined,
+    rotate: (process.env.LOG_ROTATE as 'none' | 'daily' | 'size') || 'none',
+    maxSizeMB: parseInt(process.env.LOG_MAX_SIZE_MB || '10'),
+    maxFiles: parseInt(process.env.LOG_MAX_FILES || '5'),
   },
   nodeEnv: process.env.NODE_ENV || 'development',
   llm: {
