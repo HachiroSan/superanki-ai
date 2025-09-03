@@ -1,175 +1,139 @@
-# SuperAnki AI - Sequential Pipeline Flow
+# SuperAnki AI — Pipeline (sequential, event‑driven)
 
-## Overview
-The application implements a sequential pipeline that starts with file system monitoring and ends with vocabulary database storage. Here's the complete flow:
+Personal notes on how the pipeline is wired. A single file change is the trigger; the rest runs in order for that file.
 
-## Pipeline Architecture
+## UML Sequence (per file change)
 
-```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   File System   │───▶│   File Watcher   │───▶│  Hash Service   │───▶│ File Repository │
-│   (Chokidar)    │    │   (Chokidar)     │    │   (Crypto)      │    │   (SQLite)      │
-└─────────────────┘    └──────────────────┘    └─────────────────┘    └─────────────────┘
-                                │                                              │
-                                ▼                                              ▼
-                       ┌──────────────────┐                        ┌─────────────────┐
-                       │ WatchFilesUseCase│                        │ Digest Detection│
-                       │                  │                        │                 │
-                       └──────────────────┘                        └─────────────────┘
-                                │                                              │
-                                ▼                                              ▼
-                       ┌──────────────────┐                        ┌─────────────────┐
-                       │ ProcessDigest    │                        │ Digest Parser   │
-                       │ UseCase          │                        │ (Supernote)     │
-                       └──────────────────┘                        └─────────────────┘
-                                │                                              │
-                                ▼                                              ▼
-                       ┌──────────────────┐                        ┌─────────────────┐
-                       │ Digest Repository│                        │ Vocabulary DB   │
-                       │ (SQLite)         │                        │ (SQLite)        │
-                       └──────────────────┘                        └─────────────────┘
-```
+```mermaid
+sequenceDiagram
+    autonumber
+    participant FS as Filesystem
+    participant Watcher as Chokidar Watcher
+    participant WF as WatchFilesUseCase
+    participant Hash as HashService
+    participant FilesDB as SQLiteFileRepository
+    participant PD as ProcessDigestUseCase
+    participant Parser as DigestParser
+    participant DigDB as SQLiteDigestRepository
+    participant EM as EnrichMissingUseCase
+    participant Enricher as OpenAIEnricher
+    participant EnrDB as SQLiteEnrichedCardRepository
 
-## Detailed Sequential Flow
+    FS->>Watcher: file change event
+    Watcher->>WF: handleFileChange(filePath)
+    WF->>Hash: computeFileHash(filePath)
+    Hash-->>WF: hash
+    WF->>FilesDB: findByPath / saveOrUpdate
+    FilesDB-->>WF: ok
+    WF->>PD: execute(filePath)
+    PD->>Parser: parse(content, filePath)
+    Parser-->>PD: entries[]
+    PD->>DigDB: saveManyIfNew(entries)
+    DigDB-->>PD: inserted count
+    PD-->>WF: entries[]
 
-### 1. **Application Startup** (`src/index.ts`)
-```typescript
-// Dependency Injection Setup
-const fileRepository = new SQLiteFileRepository();
-const digestRepository = new SQLiteDigestRepository();
-const fileWatcher = new ChokidarFileWatcher();
-const hashService = new CryptoHashService();
-const digestParser = new SupernoteDigestParser();
-
-// Use Case Creation
-const processDigestUseCase = new ProcessDigestUseCase(digestRepository, digestParser);
-const watchFilesUseCase = new WatchFilesUseCase(fileRepository, fileWatcher, hashService, processDigestUseCase);
-
-// Start Pipeline
-await watchFilesUseCase.execute();
-```
-
-### 2. **File System Monitoring** (`WatchFilesUseCase.execute()`)
-```typescript
-await this.fileWatcher.watch(
-  config.fileWatcher.pattern,  // "*.txt"
-  config.fileWatcher.directory, // "./files"
-  async (filePath) => {
-    await this.handleFileChange(filePath);  // Callback for each file change
-  }
-);
+    alt LLM enabled and entries.length > 0
+        WF->>EM: executeForEntries(entries)
+        EM->>EnrDB: exists(word, sourceTitle) (per word)
+        EnrDB-->>EM: bool
+        EM->>EM: group by source, batch missing
+        loop batches per source (sequential)
+            EM->>Enricher: enrich(batch, sourceTitle)
+            alt response truncated (max_output_tokens)
+                EM->>EM: split batch and retry (recursive)
+            end
+            Enricher-->>EM: EnrichedCard[]
+            EM->>EnrDB: saveManyIfNew(cards)
+            EnrDB-->>EM: inserted count
+        end
+        EM-->>WF: requested/created
+    end
 ```
 
-### 3. **File Change Detection** (`WatchFilesUseCase.handleFileChange()`)
-```typescript
-// Step 1: Compute file hash
-const newHash = await this.hashService.computeFileHash(filePath);
+## Order of operations (per file event)
 
-// Step 2: Check if file exists in database
-const existingFile = await this.fileRepository.findByPath(filePath);
+1) Compute hash → compare with last seen
+2) Upsert file record (so repeated changes don’t blow up on UNIQUE)
+3) Parse digest and write new entries to `digest_entries` (INSERT OR IGNORE)
+4) If LLM is enabled, enrich missing words for each source (book filename) and upsert to `enriched_cards`
 
-// Step 3: Determine if file is new or changed
-if (existingFile) {
-  if (existingFile.hasChanged(newHash)) {
-    // File content changed - update hash
-    await this.fileRepository.save(updatedFile);
-    
-    // Step 4: Check if it's a digest file
-    if (this.isDigestFile(filePath)) {
-      await this.processDigestUseCase.execute(filePath);
-    }
-  }
-} else {
-  // New file - save to database
-  await this.fileRepository.save(newFile);
-  
-  // Step 4: Check if it's a digest file
-  if (this.isDigestFile(filePath)) {
-    await this.processDigestUseCase.execute(filePath);
-  }
-}
+The watcher processes events sequentially; enrichment batches for the same source are handled sequentially to keep SQLite happy.
+
+## Key parts
+
+**WatchFilesUseCase**
+- Wires `chokidar` with `WATCH_PATTERN`, `WATCH_DIRECTORY`, `WATCH_DEBOUNCE_MS`.
+- For each event, runs hash → DB upsert → digest processing → optional enrichment.
+- Times each stage with the project logger.
+
+**ProcessDigestUseCase**
+- Reads the file, parses Supernote‑style entries (word + `[book](Document/book)`), and writes with `INSERT OR IGNORE` inside a transaction.
+- Returns parsed entries so the enrichment stage can decide what’s missing.
+
+**EnrichMissingUseCase**
+- Groups unique words by `sourceTitle` (book filename).
+- Filters out already‑enriched `(word, source)` pairs via `SQLiteEnrichedCardRepository.exists`.
+- Batches missing words by `LLM_BATCH_SIZE` and processes batches sequentially.
+- On “max output tokens” from the model, splits the batch and retries recursively until it succeeds (down to single words if needed).
+
+**OpenAIEnricher**
+- Uses the Responses API with JSON‑schema‑formatted text output.
+- Timeout guard ~60s; refusal detection; parse from `output[0].content[type=output_text]` or `output_text` fallback.
+- Token budget: starts at `max(4096, 1000 + 200*words)`; one retry with a higher cap (up to 16384). Logs status/usage.
+- Maps validated JSON into `EnrichedCard` rows.
+
+**Logging**
+- `ConsoleLogger` writes to console and (optionally) a file (`LOG_FILE`).
+- Rotation can be `none`, `daily`, or `size` with retention (`LOG_MAX_*`).
+- Timers are emitted as info lines; missing timer ends show up as warnings.
+
+## Tables (created on first run)
+
+- `files(path PRIMARY KEY, hash, last_seen)`
+- `digest_entries(word PRIMARY KEY, book_filename, source_file, created_at)`
+- `enriched_cards(word, source_title, canonical_answer, canonical_answer_alt, part_of_speech, definition, example_sentence, hint, created_at, updated_at, UNIQUE(word, source_title))`
+
+Note: `digest_entries` uses `word` as PK (simple, matches current export). If collisions across books become an issue, this can evolve to a composite key.
+
+## Config knobs
+
+- Watcher: `WATCH_DIRECTORY`, `WATCH_PATTERN`, `WATCH_DEBOUNCE_MS`
+- DB: `DATABASE_PATH`
+- LLM: `LLM_ENABLED`, `LLM_MODEL`, `LLM_BATCH_SIZE`, `LLM_CONCURRENCY`, `OPENAI_API_KEY`, `OPENAI_BASE_URL`
+- Logs: `LOG_LEVEL`, `LOG_FILE`, `LOG_ROTATE`, `LOG_MAX_SIZE_MB`, `LOG_MAX_FILES`
+
+## Error/edge handling
+
+- Digest parsing errors and DB write errors are logged and bubble from their use cases.
+- LLM timeouts, refusal, and rate‑limit/quota messages are surfaced; token‑limit truncation triggers split‑and‑retry.
+- Concurrency is kept low; batches are serialized per source to avoid transaction conflicts.
+
+## Quick inspect
+
+## UML Components (simplified)
+
+```mermaid
+flowchart LR
+    FS[Filesystem] --> Watcher[Chokidar]
+    Watcher --> WF[WatchFilesUseCase]
+    WF --> Hash[HashService]
+    WF --> FilesDB[Files SQLite]
+    WF --> PD[ProcessDigestUseCase]
+    PD --> Parser[DigestParser]
+    PD --> DigDB[Digest SQLite]
+    WF --> EM[EnrichMissingUseCase]
+    EM --> Enricher[OpenAIEnricher]
+    EM --> EnrichedDB[Enriched SQLite]
+    WF --> Logger[Logger]
+    PD --> Logger
+    EM --> Logger
 ```
 
-### 4. **Vocabulary Extraction Trigger**
-All watched text files (e.g., `*.txt`) are processed for vocabulary extraction on add and on content change — no filename filter is applied.
-
-### 5. **Digest Processing** (`ProcessDigestUseCase.execute()`)
-```typescript
-// Step 1: Read file content
-const content = await fs.readFile(filePath, 'utf-8');
-
-// Step 2: Parse digest entries
-const entries = await this.digestParser.parse(content, filePath);
-
-// Step 3: Process each entry
-for (const entry of entries) {
-  await this.digestRepository.upsert(entry);
-}
 ```
-
-### 6. **Digest Parsing** (`SupernoteDigestParser.parse()`)
-```typescript
-// Parse Supernote format:
-// word
-// [book_filename](Document/book_filename)
-const entries = await this.digestParser.parse(content, filePath);
+sqlite3 ./data/app.db
+.headers on
+.mode box
+.tables
+.schema enriched_cards
+SELECT word, source_title, part_of_speech, updated_at FROM enriched_cards ORDER BY updated_at DESC LIMIT 10;
 ```
-
-### 7. **Database Storage** (`SQLiteDigestRepository.upsert()`)
-```typescript
-// Step 1: Check if word already exists
-const existing = await this.findByWord(entry.word);
-
-if (existing) {
-  console.log(`Word "${entry.word}" already exists, skipping...`);
-  return; // Skip insertion
-}
-
-// Step 2: Insert new word
-await this.db.run(
-  'INSERT INTO digest_entries (word, book_filename, source_file, created_at) VALUES (?, ?, ?, ?)',
-  [entry.word, entry.bookFilename, entry.sourceFile, entry.createdAt.getTime()]
-);
-```
-
-## Pipeline Triggers
-
-### **New File Detection**
-1. File system event → Chokidar
-2. Hash computation → Crypto service
-3. Database check → File repository
-4. New file save → File repository
-5. Vocabulary extraction → ProcessDigestUseCase
-6. Vocabulary storage → Digest repository
-
-### **File Change Detection**
-1. File system event → Chokidar
-2. Hash computation → Crypto service
-3. Database check → File repository
-4. Hash comparison → WatchFilesUseCase
-5. Hash update → File repository
-6. Vocabulary extraction → ProcessDigestUseCase
-7. Vocabulary storage → Digest repository
-
-## Error Handling
-
-Each step in the pipeline includes error handling:
-- **File reading errors**: Caught in ProcessDigestUseCase
-- **Database errors**: Caught in repository implementations
-- **Parsing errors**: Caught in ProcessDigestUseCase
-- **File system errors**: Caught in WatchFilesUseCase
-
-## Performance Considerations
-
-- **Debouncing**: File watcher uses configurable debounce (default: 1000ms)
-- **Batch processing**: ProcessDigestUseCase supports batch file processing
-- **Database transactions**: SQLiteDigestRepository uses transactions for bulk operations
-- **Memory efficiency**: Files are read and processed one at a time
-
-## Configuration
-
-The pipeline is configurable through environment variables:
-- `WATCH_PATTERN`: File pattern to watch (default: "*.txt")
-- `WATCH_DIRECTORY`: Directory to monitor (default: "./files")
-- `WATCH_DEBOUNCE_MS`: Debounce time in milliseconds (default: 1000)
-- `DATABASE_PATH`: SQLite database path (all tables in one file)
