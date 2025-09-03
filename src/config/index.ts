@@ -30,7 +30,7 @@ export const config: Config = configSchema.parse({
   llm: {
     enabled: (process.env.LLM_ENABLED || 'false').toLowerCase() === 'true',
     provider: process.env.LLM_PROVIDER || 'openai',
-    model: process.env.LLM_MODEL || 'gpt-4o-mini',
+    model: process.env.LLM_MODEL || 'gpt-5-nano',
     batchSize: parseInt(process.env.LLM_BATCH_SIZE || '20'),
     concurrency: parseInt(process.env.LLM_CONCURRENCY || '2'),
   },

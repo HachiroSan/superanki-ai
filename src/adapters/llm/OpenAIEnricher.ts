@@ -1,60 +1,68 @@
-// Minimal OpenAI-based LLMEnricher implementation.
+// OpenAI-based LLMEnricher implementation using latest OpenAI API.
 // Note: Requires `openai` package and OPENAI_API_KEY at runtime.
 
 import { LLMEnricher } from '../../core/services/LLMEnricher';
 import { EnrichedCard, PartOfSpeech } from '../../core/entities/EnrichedCard';
 import { buildSystemPrompt, buildUserPrompt } from './prompts';
-
-type OpenAIClient = any; // kept loose to avoid hard dependency in type-check
+import OpenAI from 'openai';
 
 export class OpenAIEnricher implements LLMEnricher {
   constructor(
-    private client: OpenAIClient,
+    private client: InstanceType<typeof OpenAI>,
     private model: string,
-    private options: { temperature?: number; seed?: number } = {}
+    private options: { temperature?: number } = {}
   ) {}
+
+  private isTemperatureSupported(): boolean {
+    // Some models in Responses API don't support temperature parameter
+    // For now, we'll be conservative and only use temperature with known compatible models
+    const temperatureSupportedModels = [
+      'gpt-4o',
+      'gpt-4o-2024-08-06',
+      'gpt-4-turbo',
+      'gpt-4-turbo-2024-04-09',
+    ];
+    
+    return temperatureSupportedModels.some(model => this.model.includes(model));
+  }
 
   private getSchema() {
     return {
-      name: 'enriched_cards_schema',
-      schema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        items: {
+          type: 'array',
           items: {
-            type: 'array',
-            minItems: 1,
-            items: {
-              type: 'object',
-              additionalProperties: false,
-              properties: {
-                Word: { type: 'string' },
-                CanonicalAnswer: { type: 'string' },
-                CanonicalAnswerAlt: { type: ['string', 'null'] },
-                PartOfSpeech: {
-                  type: 'string',
-                  enum: ['noun', 'verb', 'adj', 'adv', 'prep', 'pron', 'conj', 'det', 'interj', 'phrase'],
-                },
-                Definition: { type: 'string' },
-                ExampleSentence: { type: 'string' },
-                SourceTitle: { type: 'string' },
-                Hint: { type: 'string' },
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              Word: { type: 'string' },
+              CanonicalAnswer: { type: 'string' },
+              CanonicalAnswerAlt: { type: ['string', 'null'] },
+              PartOfSpeech: {
+                type: 'string',
+                enum: ['noun', 'verb', 'adj', 'adv', 'prep', 'pron', 'conj', 'det', 'interj', 'phrase'],
               },
-              required: [
-                'Word',
-                'CanonicalAnswer',
-                'PartOfSpeech',
-                'Definition',
-                'ExampleSentence',
-                'SourceTitle',
-                'Hint',
-              ],
+              Definition: { type: 'string' },
+              ExampleSentence: { type: 'string' },
+              SourceTitle: { type: 'string' },
+              Hint: { type: 'string' },
             },
+            required: [
+              'Word',
+              'CanonicalAnswer',
+              'CanonicalAnswerAlt',
+              'PartOfSpeech',
+              'Definition',
+              'ExampleSentence',
+              'SourceTitle',
+              'Hint',
+            ],
           },
         },
-        required: ['items'],
       },
-      strict: true,
+      required: ['items'],
     } as const;
   }
 
@@ -101,53 +109,112 @@ export class OpenAIEnricher implements LLMEnricher {
 
     const jsonSchema = this.getSchema();
 
-    const res = await openai.responses.create({
-      model: this.model,
-      input: [
-        { role: 'system', content: system },
-        { role: 'user', content: user },
-      ],
-      response_format: { type: 'json_schema', json_schema: jsonSchema },
-      temperature: this.options.temperature ?? 0.2,
-      seed: this.options.seed ?? 7,
-      max_output_tokens: 200 + 80 * words.length,
-    });
+    try {
+      // Helper to parse structured output from Responses API payload
+      const tryParseFromResponse = (res: any): any | null => {
+        const output = res?.output?.[0];
+        if (output?.content) {
+          const structuredOutput = output.content.find((c: any) => c?.type === 'output_text');
+          if (structuredOutput?.text) {
+            const parsed = this.tryParseJson(structuredOutput.text);
+            if (parsed) return parsed;
+          }
+        }
+        if (res && (res as any).output_text) {
+          const parsed = this.tryParseJson((res as any).output_text);
+          if (parsed) return parsed;
+        }
+        return null;
+      };
 
-    // Extract JSON
-    const text = (res as any).output_text ?? (res as any).choices?.[0]?.message?.content ?? '';
-    if (!text) return [];
+      // Be generous with output budget; retry once if truncated
+      let maxTokens = Math.max(4096, 1000 + 200 * words.length);
+      const maxCap = 8192;
+      let lastError: Error | null = null;
 
-    const parsed = this.tryParseJson(String(text));
-    if (!parsed || !Array.isArray(parsed.items)) return [];
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const res = await openai.responses.create({
+          model: this.model,
+          input: [
+            { role: 'system', content: system },
+            { role: 'user', content: user },
+          ],
+          text: {
+            format: {
+              type: 'json_schema',
+              name: 'enriched_cards_schema',
+              schema: jsonSchema,
+              strict: true,
+            },
+          },
+          ...(this.options.temperature != null && this.isTemperatureSupported() ? { temperature: this.options.temperature } : {}),
+          max_output_tokens: maxTokens,
+        });
 
-    // Map and normalize
-    const out: EnrichedCard[] = [];
-    for (const item of parsed.items) {
-      const word = String(item.Word || '').trim();
-      const pos = String(item.PartOfSpeech || '').trim() as PartOfSpeech;
-      const def = String(item.Definition || '').trim();
-      const can = String(item.CanonicalAnswer || '').trim();
-      const alt = item.CanonicalAnswerAlt == null ? null : String(item.CanonicalAnswerAlt).trim();
-      const ex = String(item.ExampleSentence || '').trim();
-      const src = String(item.SourceTitle || '').trim();
-      const hint = String(item.Hint || '').trim();
+        // Check for refusals
+        const output = res.output?.[0];
+        if (output?.content?.[0]?.type === 'refusal') {
+          throw new Error(`Model refused to respond: ${output.content[0].refusal}`);
+        }
 
-      if (!word || !src || !pos || !def || !can || !ex || !hint) continue;
+        // Try to parse whatever we have (even if status is incomplete)
+        let parsed = tryParseFromResponse(res);
 
-      out.push(
-        EnrichedCard.create({
-          word,
-          canonicalAnswer: can,
-          canonicalAnswerAlt: alt || null,
-          partOfSpeech: pos,
-          definition: def,
-          exampleSentence: ex,
-          sourceTitle: src,
-          hint,
-        })
-      );
+        // If incomplete due to token limit and we couldn't parse, consider retrying
+        const isTruncated = res.status === 'incomplete' && res.incomplete_details?.reason === 'max_output_tokens';
+        if ((!parsed || !Array.isArray(parsed.items)) && isTruncated) {
+          // If we have another attempt, increase budget and retry
+          if (attempt === 0 && maxTokens < maxCap) {
+            maxTokens = Math.min(maxCap, Math.ceil(maxTokens * 2));
+            lastError = new Error('Response incomplete due to max output tokens limit');
+            continue;
+          }
+          // No more retries; throw with the same message tests expect
+          throw new Error('Response incomplete due to max output tokens limit');
+        }
+
+        if (!parsed || !Array.isArray(parsed.items)) {
+          console.warn('Failed to parse structured output from OpenAI response');
+          return [];
+        }
+
+        // Map and normalize
+        const out: EnrichedCard[] = [];
+        for (const item of parsed.items) {
+          const word = String(item.Word || '').trim();
+          const pos = String(item.PartOfSpeech || '').trim() as PartOfSpeech;
+          const def = String(item.Definition || '').trim();
+          const can = String(item.CanonicalAnswer || '').trim();
+          const alt = item.CanonicalAnswerAlt == null ? null : String(item.CanonicalAnswerAlt).trim();
+          const ex = String(item.ExampleSentence || '').trim();
+          const src = String(item.SourceTitle || '').trim();
+          const hint = String(item.Hint || '').trim();
+
+          if (!word || !src || !pos || !def || !can || !ex || !hint) continue;
+
+          out.push(
+            EnrichedCard.create({
+              word,
+              canonicalAnswer: can,
+              canonicalAnswerAlt: alt || null,
+              partOfSpeech: pos,
+              definition: def,
+              exampleSentence: ex,
+              sourceTitle: src,
+              hint,
+            })
+          );
+        }
+
+        return out;
+      }
+
+      // Should be unreachable; rethrow lastError if present
+      if (lastError) throw lastError;
+      return [];
+    } catch (error) {
+      console.error('Error calling OpenAI API:', error);
+      throw error;
     }
-
-    return out;
   }
 }

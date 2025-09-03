@@ -10,7 +10,7 @@ describe('OpenAIEnricher', () => {
     expect(fakeClient.responses.create).not.toHaveBeenCalled();
   });
 
-  test('maps valid JSON result into EnrichedCard[] (output_text)', async () => {
+  test('maps valid JSON result into EnrichedCard[] (new API format)', async () => {
     const payload = {
       items: [
         {
@@ -38,7 +38,19 @@ describe('OpenAIEnricher', () => {
 
     const fakeClient = {
       responses: {
-        create: jest.fn().mockResolvedValue({ output_text: JSON.stringify(payload) }),
+        create: jest.fn().mockResolvedValue({
+          status: 'completed',
+          output: [
+            {
+              content: [
+                {
+                  type: 'output_text',
+                  text: JSON.stringify(payload),
+                },
+              ],
+            },
+          ],
+        }),
       },
     } as any;
 
@@ -64,7 +76,7 @@ describe('OpenAIEnricher', () => {
     expect(b.partOfSpeech).toBe('verb');
   });
 
-  test('falls back to choices[0].message.content JSON when output_text missing', async () => {
+  test('falls back to output_text property when structured output missing', async () => {
     const payload = {
       items: [
         {
@@ -83,7 +95,8 @@ describe('OpenAIEnricher', () => {
     const fakeClient = {
       responses: {
         create: jest.fn().mockResolvedValue({
-          choices: [{ message: { content: JSON.stringify(payload) } }],
+          status: 'completed',
+          output_text: JSON.stringify(payload),
         }),
       },
     } as any;
@@ -122,7 +135,19 @@ describe('OpenAIEnricher', () => {
 
     const fakeClient = {
       responses: {
-        create: jest.fn().mockResolvedValue({ output_text: JSON.stringify(payload) }),
+        create: jest.fn().mockResolvedValue({
+          status: 'completed',
+          output: [
+            {
+              content: [
+                {
+                  type: 'output_text',
+                  text: JSON.stringify(payload),
+                },
+              ],
+            },
+          ],
+        }),
       },
     } as any;
 
@@ -130,6 +155,56 @@ describe('OpenAIEnricher', () => {
     const result = await enricher.enrich(['keep'], 'Book X');
     expect(result).toHaveLength(1);
     expect(result[0].word).toBe('keep');
+  });
+
+  test('handles refusal responses', async () => {
+    const fakeClient = {
+      responses: {
+        create: jest.fn().mockResolvedValue({
+          status: 'completed',
+          output: [
+            {
+              content: [
+                {
+                  type: 'refusal',
+                  refusal: 'I cannot help with this request.',
+                },
+              ],
+            },
+          ],
+        }),
+      },
+    } as any;
+
+    const enricher = new OpenAIEnricher(fakeClient, 'test-model');
+    await expect(enricher.enrich(['test'], 'Book')).rejects.toThrow('Model refused to respond');
+  });
+
+  test('handles incomplete responses', async () => {
+    const fakeClient = {
+      responses: {
+        create: jest.fn().mockResolvedValue({
+          status: 'incomplete',
+          incomplete_details: {
+            reason: 'max_output_tokens',
+          },
+        }),
+      },
+    } as any;
+
+    const enricher = new OpenAIEnricher(fakeClient, 'test-model');
+    await expect(enricher.enrich(['test'], 'Book')).rejects.toThrow('Response incomplete due to max output tokens limit');
+  });
+
+  test('handles API errors gracefully', async () => {
+    const fakeClient = {
+      responses: {
+        create: jest.fn().mockRejectedValue(new Error('API Error')),
+      },
+    } as any;
+
+    const enricher = new OpenAIEnricher(fakeClient, 'test-model');
+    await expect(enricher.enrich(['test'], 'Book')).rejects.toThrow('API Error');
   });
 });
 

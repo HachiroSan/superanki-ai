@@ -20,7 +20,7 @@ export const configSchema = z.object({
   llm: z.object({
     enabled: z.boolean().default(false),
     provider: z.string().default('openai'),
-    model: z.string().default('gpt-4o-mini'),
+    model: z.string().default('gpt-5-nano'),
     batchSize: z.number().min(1).max(100).default(20),
     concurrency: z.number().min(1).max(10).default(2),
   }),
