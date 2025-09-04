@@ -1,0 +1,42 @@
+### AnkiConnect examples (use with REST client extensions or curl)
+
+# Verify AnkiConnect
+POST http://localhost:8765
+Content-Type: application/json
+
+{
+  "action": "version",
+  "version": 6
+}
+
+### Ensure deck exists
+POST http://localhost:8765
+Content-Type: application/json
+
+{
+  "action": "createDeck",
+  "version": 6,
+  "params": { "deck": "SuperAnki" }
+}
+
+### Add a basic note
+POST http://localhost:8765
+Content-Type: application/json
+
+{
+  "action": "addNote",
+  "version": 6,
+  "params": {
+    "note": {
+      "deckName": "SuperAnki",
+      "modelName": "Basic",
+      "fields": {
+        "Front": "abate",
+        "Back": "to lessen; to reduce in degree\n\nExample: The storm finally abated."
+      },
+      "options": { "allowDuplicate": false },
+      "tags": ["superanki", "source:BookTitle"]
+    }
+  }
+}
+

@@ -38,4 +38,14 @@ export const config: Config = configSchema.parse({
     batchSize: parseInt(process.env.LLM_BATCH_SIZE || '20'),
     concurrency: parseInt(process.env.LLM_CONCURRENCY || '2'),
   },
+  anki: {
+    autoPush: (process.env.ANKI_AUTO_PUSH || 'false').toLowerCase() === 'true',
+    url: process.env.ANKI_URL || 'http://127.0.0.1:8765',
+    deckPrefix: process.env.ANKI_DECK_PREFIX || 'SuperAnki::Books',
+    model: process.env.ANKI_MODEL || 'Superanki',
+    fieldFront: process.env.ANKI_FIELD_FRONT || 'Front',
+    fieldBack: process.env.ANKI_FIELD_BACK || 'Back',
+    key: process.env.ANKI_KEY || undefined,
+    autoLaunch: (process.env.ANKI_AUTO_LAUNCH || 'false').toLowerCase() === 'true',
+  },
 });

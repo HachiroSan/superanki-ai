@@ -1,0 +1,13 @@
+services:
+    anki-desktop:
+        image: mikescherbakov/anki-desktop-docker:latest
+        container_name: anki-desktop
+        ports:
+            - "3000:3000"
+            - "8765:8765"
+        volumes:
+            - anki-data:/config/.local/share
+        restart: unless-stopped
+
+volumes:
+    anki-data:

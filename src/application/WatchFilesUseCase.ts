@@ -5,6 +5,7 @@ import { HashService } from '../core/services/HashService';
 import { ProcessDigestUseCase } from './ProcessDigestUseCase';
 import { config } from '../config';
 import { EnrichMissingUseCase } from './EnrichMissingUseCase';
+import { PushToAnkiUseCase } from './PushToAnkiUseCase';
 import { Logger } from '../core/services/Logger';
 
 export class WatchFilesUseCase {
@@ -14,7 +15,8 @@ export class WatchFilesUseCase {
     private hashService: HashService,
     private processDigestUseCase: ProcessDigestUseCase,
     private logger: Logger,
-    private enrichMissingUseCase?: EnrichMissingUseCase
+    private enrichMissingUseCase?: EnrichMissingUseCase,
+    private pushToAnkiUseCase?: PushToAnkiUseCase
   ) {}
 
   async execute(): Promise<void> {
@@ -69,6 +71,11 @@ export class WatchFilesUseCase {
             this.logger.info(`Enriching ${entries.length} entries via LLM (if missing)...`);
             const result = await this.enrichMissingUseCase.executeForEntries(entries);
             this.logger.info(`Enrichment completed: ${result.created} new cards created from ${result.requested} requested`);
+            if (this.pushToAnkiUseCase && config.anki.autoPush) {
+              const sources = Array.from(new Set(entries.map((e) => e.bookFilename)));
+              this.logger.info(`Pushing enriched cards to Anki for ${sources.length} source(s)...`);
+              await this.pushToAnkiUseCase.pushForSources(sources);
+            }
           }
         } else {
           this.logger.debug(`File unchanged: ${filePath}`);
@@ -93,6 +100,11 @@ export class WatchFilesUseCase {
           this.logger.info(`Enriching ${entries.length} entries via LLM (if missing)...`);
           const result = await this.enrichMissingUseCase.executeForEntries(entries);
           this.logger.info(`Enrichment completed: ${result.created} new cards created from ${result.requested} requested`);
+          if (this.pushToAnkiUseCase && config.anki.autoPush) {
+            const sources = Array.from(new Set(entries.map((e) => e.bookFilename)));
+            this.logger.info(`Pushing enriched cards to Anki for ${sources.length} source(s)...`);
+            await this.pushToAnkiUseCase.pushForSources(sources);
+          }
         }
       }
     } catch (error) {

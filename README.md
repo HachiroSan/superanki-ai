@@ -158,3 +158,5 @@ ISC
 ## TODO
 
 - Anki Desktop integration (next pipeline stage)
+
+See `pipelines/ankiconnect` for a Dockerized Anki Desktop setup and a helper to push `enriched_cards` to Anki via AnkiConnect.

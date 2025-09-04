@@ -10,6 +10,7 @@ import { SQLiteEnrichedCardRepository } from './adapters/database/SQLiteEnriched
 import { OpenAIEnricher } from './adapters/llm/OpenAIEnricher';
 import OpenAI from 'openai';
 import { EnrichMissingUseCase } from './application/EnrichMissingUseCase';
+import { PushToAnkiUseCase } from './application/PushToAnkiUseCase';
 import { ConsoleLogger } from './adapters/logging/ConsoleLogger';
 import { Logger } from './core/services/Logger';
 
@@ -47,6 +48,7 @@ async function main() {
 
     // Optional third stage: LLM enrichment
     let enrichMissingUseCase: EnrichMissingUseCase | undefined;
+    let pushToAnkiUseCase: PushToAnkiUseCase | undefined;
     if (config.llm.enabled) {
       logger.info('Initializing LLM enrichment...');
       logger.info(`LLM Provider: ${config.llm.provider}`);
@@ -78,6 +80,11 @@ async function main() {
       });
       
       logger.info('LLM enrichment initialized successfully');
+      // Initialize optional Anki auto-push
+      if (config.anki.autoPush) {
+        pushToAnkiUseCase = new PushToAnkiUseCase(logger);
+        logger.info('Anki auto-push enabled');
+      }
     }
 
     const watchFilesUseCase = new WatchFilesUseCase(
@@ -86,7 +93,8 @@ async function main() {
       hashService,              // HashService interface
       processDigestUseCase,     // ProcessDigestUseCase
       logger,                   // Logger interface
-      enrichMissingUseCase      // optional EnrichMissingUseCase
+      enrichMissingUseCase,     // optional EnrichMissingUseCase
+      pushToAnkiUseCase         // optional PushToAnkiUseCase
     );
 
     // Start watching files
