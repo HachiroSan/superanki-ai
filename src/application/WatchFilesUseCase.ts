@@ -71,11 +71,11 @@ export class WatchFilesUseCase {
             this.logger.info(`Enriching ${entries.length} entries via LLM (if missing)...`);
             const result = await this.enrichMissingUseCase.executeForEntries(entries);
             this.logger.info(`Enrichment completed: ${result.created} new cards created from ${result.requested} requested`);
-            if (this.pushToAnkiUseCase && config.anki.autoPush) {
-              const sources = Array.from(new Set(entries.map((e) => e.bookFilename)));
-              this.logger.info(`Pushing enriched cards to Anki for ${sources.length} source(s)...`);
-              await this.pushToAnkiUseCase.pushForSources(sources);
-            }
+          }
+          if (this.pushToAnkiUseCase && config.anki.autoPush && entries.length > 0) {
+            const sources = Array.from(new Set(entries.map((e) => e.bookFilename)));
+            this.logger.info(`Pushing enriched cards to Anki for ${sources.length} source(s)...`);
+            await this.pushToAnkiUseCase.pushForSources(sources);
           }
         } else {
           this.logger.debug(`File unchanged: ${filePath}`);
@@ -100,11 +100,11 @@ export class WatchFilesUseCase {
           this.logger.info(`Enriching ${entries.length} entries via LLM (if missing)...`);
           const result = await this.enrichMissingUseCase.executeForEntries(entries);
           this.logger.info(`Enrichment completed: ${result.created} new cards created from ${result.requested} requested`);
-          if (this.pushToAnkiUseCase && config.anki.autoPush) {
-            const sources = Array.from(new Set(entries.map((e) => e.bookFilename)));
-            this.logger.info(`Pushing enriched cards to Anki for ${sources.length} source(s)...`);
-            await this.pushToAnkiUseCase.pushForSources(sources);
-          }
+        }
+        if (this.pushToAnkiUseCase && config.anki.autoPush && entries.length > 0) {
+          const sources = Array.from(new Set(entries.map((e) => e.bookFilename)));
+          this.logger.info(`Pushing enriched cards to Anki for ${sources.length} source(s)...`);
+          await this.pushToAnkiUseCase.pushForSources(sources);
         }
       }
     } catch (error) {

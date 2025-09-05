@@ -1,6 +1,6 @@
 # SuperAnki AI
 
-Experimental automated pipeline for turning [Supernote Digest](https://support.supernote.com/en_US/Tools-Features/1735114-digest) into AI-generated Anki cards for space-repetition practice. We use AnkiWeb service to store our flashcards generated from our server. It watches a folder for exported notes, parses unique vocabulary per book/source, and (optionally) calls an LLM to draft fields (definition, example, mnemonic, etc.). Data is stored in a local SQLite database.
+Experimental automated pipeline for turning [Supernote Digest](https://support.supernote.com/en_US/Tools-Features/1735114-digest) into AI‑generated Anki cards for spaced‑repetition practice. It watches a folder for exported notes, parses unique vocabulary per book/source, optionally enriches with an LLM (definition, example, hint, etc.), stores results in a local SQLite database, and can push notes to Anki Desktop via the AnkiConnect HTTP API (Dockerized Anki included).
 
 ## How It Works
 
@@ -95,6 +95,41 @@ Core settings live in environment files. Copy `.env.example` to `.env.dev` for l
   - Loaded by `src/test/setup.ts` for Jest runs.
   - Use it to set an isolated DB path (e.g., `./data/test.db`) and toggles (e.g., `RUN_LLM_INTEGRATION=0`).
 
+## Anki Integration
+
+This project can push enriched cards directly to Anki Desktop via the AnkiConnect HTTP API (no client library required). A Dockerized Anki Desktop setup is provided.
+
+Why Docker Anki Desktop?
+- We need a real Anki Desktop client to sync with AnkiWeb. There is no public server API to push decks/notes to AnkiWeb directly.
+- AnkiConnect runs inside Anki Desktop. Running it in Docker lets the server push notes locally, then use Anki’s built‑in Sync to send changes to AnkiWeb.
+- Once synced, your notes propagate to all your other clients (desktop, mobile, etc.).
+- Action required: open the Dockerized Anki UI once, click Sync, and sign in to your AnkiWeb account so subsequent pushes auto‑sync.
+
+- Start Anki Desktop (Docker):
+  - `cd pipelines/ankiconnect && docker compose up -d`
+  - Open http://localhost:3000, install AnkiConnect add‑on (code `2055492159`), set `webBindAddress=0.0.0.0`, then restart Anki inside the container.
+  - Click the Sync button and sign in to AnkiWeb to enable syncing from the container.
+- Verify AnkiConnect:
+  - `curl -s http://127.0.0.1:8765 -H 'Content-Type: application/json' -d '{"action":"version","version":6}'`
+- Configure env for pushes:
+  - `ANKI_URL=http://127.0.0.1:8765`
+  - `ANKI_DECK_PREFIX=SuperAnki::Books` (decks are created as `<prefix>::<Source Title>`)
+  - `ANKI_MODEL=Superanki` (and field names if customized)
+
+See `pipelines/ankiconnect/README.md` for full setup and a helper script to push from the DB.
+
+### Anki Integration Test
+
+An opt‑in Jest test exercises the push path end‑to‑end using AnkiConnect.
+
+- Enable and run:
+  - `RUN_ANKI_INTEGRATION=1 ANKI_URL=http://127.0.0.1:8765 npx jest src/application/__tests__/PushToAnkiUseCase.test.ts -i`
+- Keep decks for inspection (skip cleanup):
+  - `KEEP_ANKI_DECK=1 RUN_ANKI_INTEGRATION=1 ANKI_URL=http://127.0.0.1:8765 npx jest src/application/__tests__/PushToAnkiUseCase.test.ts -i`
+- Notes:
+  - The test mirrors the app’s deck naming sanitization to find the exact deck.
+  - By default it deletes created notes and the leaf test deck (unless `KEEP_ANKI_DECK=1`).
+
 ## LLM Notes
 
 - API: Uses OpenAI’s Responses API with JSON‑schema‑formatted text output.
@@ -157,6 +192,4 @@ ISC
 
 ## TODO
 
-- Anki Desktop integration (next pipeline stage)
-
-See `pipelines/ankiconnect` for a Dockerized Anki Desktop setup and a helper to push `enriched_cards` to Anki via AnkiConnect.
+- See `pipelines/ankiconnect` for a Dockerized Anki Desktop setup and a helper to push `enriched_cards` to Anki via AnkiConnect.

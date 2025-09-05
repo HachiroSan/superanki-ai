@@ -1,6 +1,13 @@
 # Anki Desktop (AnkiConnect) Pipeline
 
-This pipeline feeds enriched cards from the local SQLite DB to Anki Desktop through the AnkiConnect add‑on. It includes a Dockerized Anki Desktop (web UI) and a small helper script to push notes.
+This pipeline feeds enriched cards from the local SQLite DB to Anki Desktop through the AnkiConnect add‑on. It includes a Dockerized Anki Desktop (web UI) and a small helper script to push notes. The application code talks to AnkiConnect directly via HTTP (no client library needed).
+
+## Why Docker Anki Desktop?
+
+- AnkiConnect is an add‑on that runs inside Anki Desktop; there’s no direct AnkiWeb API to upload notes.
+- Running Anki Desktop in Docker provides a headless, reproducible client on your server.
+- The container acts as your sync client: push notes via AnkiConnect → click Sync (or set auto‑sync) → changes go to AnkiWeb → other devices receive them.
+- One‑time step: open the container UI, press Sync, and sign in to your AnkiWeb account so future syncs work.
 
 ## What You Get
 
@@ -40,6 +47,10 @@ docker compose up -d
   - `webPort`: `8765`
 - Restart Anki from inside the container UI.
 
+4.1) Enable syncing to AnkiWeb:
+
+- In the Anki UI, press the Sync button and sign in with your AnkiWeb account. This is required so notes pushed from this container propagate to your other devices.
+
 5) Verify AnkiConnect is reachable:
 
 ```bash
@@ -54,9 +65,12 @@ The helper script reads from your project database and sends notes to Anki via A
 
 ```bash
 # From repo root, after you’ve generated enriched cards
-node pipelines/ankiconnect/push-enriched-cards.js \
-  --deck "SuperAnki" \
-  --model "Basic" \
+pnpm push-ankiconnect
+
+# Or run directly with tsx and flags
+NODE_ENV=development tsx pipelines/ankiconnect/push-enriched-cards.ts \
+  --deck-prefix "SuperAnki::Books" \
+  --model "Superanki" \
   --limit 200
 ```
 
@@ -71,6 +85,16 @@ We map `enriched_cards` to a `Basic` note by default:
 - Back: `definition` + two newlines + `example_sentence` + optional `hint`
 
 You can switch to a custom note type by changing `--model` and field names in the script’s `buildNote` function.
+
+## Integration Test
+
+An end‑to‑end Jest test verifies pushing to AnkiConnect.
+
+- Run with Anki Desktop up:
+  - `RUN_ANKI_INTEGRATION=1 ANKI_URL=http://127.0.0.1:8765 npx jest src/application/__tests__/PushToAnkiUseCase.test.ts -i`
+- Keep decks around to inspect the UI (skip cleanup):
+  - `KEEP_ANKI_DECK=1 RUN_ANKI_INTEGRATION=1 ANKI_URL=http://127.0.0.1:8765 npx jest src/application/__tests__/PushToAnkiUseCase.test.ts -i`
+- Deck naming: the app creates decks as `<prefix>::<sanitized_source_title>`. The sanitization collapses whitespace, replaces `/` with space, and replaces `::` with `:` inside titles.
 
 ## Files
 

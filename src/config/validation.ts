@@ -46,7 +46,6 @@ export const configSchema = z.object({
     fieldFront: z.string().default('Front').optional(),
     fieldBack: z.string().default('Back').optional(),
     key: z.string().optional(),
-    autoLaunch: z.boolean().default(false).optional(),
   }).default({
     autoPush: false,
     url: 'http://127.0.0.1:8765',

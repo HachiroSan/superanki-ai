@@ -6,9 +6,12 @@ import { config } from '../config';
 type EnrichedRow = {
   word: string;
   source_title?: string;
-  definition?: string;
-  example_sentence?: string;
-  hint?: string;
+  canonical_answer?: string | null;
+  canonical_answer_alt?: string | null;
+  part_of_speech?: string | null;
+  definition?: string | null;
+  example_sentence?: string | null;
+  hint?: string | null;
   updated_at?: number;
 };
 
@@ -45,15 +48,18 @@ export class PushToAnkiUseCase {
     return this.connectionManager.getConnection();
   }
 
-  private parseHostAndPort(url: string): { host: string; port: number } {
-    try {
-      const u = new URL(url);
-      const host = `${u.protocol}//${u.hostname}`;
-      const port = u.port ? Number(u.port) : 8765;
-      return { host, port };
-    } catch {
-      return { host: 'http://127.0.0.1', port: 8765 };
-    }
+  private async callAnki<T = any>(action: string, params: any = {}): Promise<T> {
+    const body: any = { action, version: 6, params };
+    if (config.anki.key) body.key = config.anki.key;
+    const res = await fetch(config.anki.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`AnkiConnect HTTP ${res.status}`);
+    const json = await res.json() as { error?: string; result: T };
+    if (json.error) throw new Error(String(json.error));
+    return json.result;
   }
 
   async pushForSources(sources: string[]): Promise<{ created: number; updated: number }> {
@@ -62,14 +68,7 @@ export class PushToAnkiUseCase {
       return { created: 0, updated: 0 };
     }
 
-    const { host, port } = this.parseHostAndPort(config.anki.url);
-    const { YankiConnect } = (await import('yanki-connect')) as typeof import('yanki-connect');
-    const client = new YankiConnect({
-      host,
-      port,
-      key: config.anki.key,
-      autoLaunch: !!config.anki.autoLaunch,
-    });
+    // Use direct AnkiConnect HTTP API (no external client)
 
     const db = await this.getDb();
 
@@ -92,7 +91,7 @@ export class PushToAnkiUseCase {
     for (const sourceTitle of uniqueSources) {
       const deckName = `${config.anki.deckPrefix}::${sanitizeDeckComponent(sourceTitle)}`;
       if (!ensuredDecks.has(deckName)) {
-        await client.deck.createDeck({ deck: deckName });
+        await this.callAnki('createDeck', { deck: deckName });
         ensuredDecks.add(deckName);
       }
 
@@ -142,7 +141,7 @@ export class PushToAnkiUseCase {
 
         let noteIds: number[] = [];
         try {
-          noteIds = await client.note.findNotes({ query });
+          noteIds = await this.callAnki<number[]>('findNotes', { query });
         } catch (e: any) {
           this.logger.warn(`[AnkiPush] findNotes failed for ${front}: ${e?.message || e}`);
         }
@@ -156,7 +155,7 @@ export class PushToAnkiUseCase {
             tags: string[];
           }>; 
           try {
-            infos = await client.note.notesInfo({ notes: noteIds });
+            infos = await this.callAnki<typeof infos>('notesInfo', { notes: noteIds });
           } catch (e: any) {
             this.logger.warn(`[AnkiPush] notesInfo failed for ${front}: ${e?.message || e}`);
             continue;
@@ -176,7 +175,7 @@ export class PushToAnkiUseCase {
               }
             }
             if (changed) {
-              await client.note.updateNoteFields({
+              await this.callAnki('updateNoteFields', {
                 note: {
                   id: newest.noteId,
                   fields: fieldsToUpdate,
@@ -185,19 +184,31 @@ export class PushToAnkiUseCase {
             }
 
             const merged = Array.from(new Set([...(newest.tags || []), ...newNote.tags]));
-            await client.note.updateNoteTags({ note: newest.noteId, tags: merged });
+            await this.callAnki('updateNoteTags', { note: newest.noteId, tags: merged });
 
             updated += 1;
             continue;
           }
         }
 
-        const added = await client.note.addNote({ note: newNote });
+        const added = await this.callAnki<number | null>('addNote', { note: newNote });
         if (added) created += 1;
       }
     }
 
     this.logger.info(`[AnkiPush] Completed. Created ${created}, Updated ${updated}.`);
+
+    // If any changes were made, trigger Anki to sync with AnkiWeb
+    if (created + updated > 0) {
+      try {
+        this.logger.info('[AnkiPush] Syncing with AnkiWeb...');
+        await this.callAnki('sync');
+        this.logger.info('[AnkiPush] Sync completed.');
+      } catch (e: any) {
+        this.logger.warn(`[AnkiPush] Sync failed: ${e?.message || e}`);
+      }
+    }
+
     return { created, updated };
   }
 }
