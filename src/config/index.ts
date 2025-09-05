@@ -39,13 +39,13 @@ export const config: Config = configSchema.parse({
     concurrency: parseInt(process.env.LLM_CONCURRENCY || '2'),
   },
   anki: {
-    autoPush: (process.env.ANKI_AUTO_PUSH || 'false').toLowerCase() === 'true',
+    // Default to true unless explicitly set to something else
+    autoPush: (process.env.ANKI_AUTO_PUSH ?? 'true').toLowerCase() === 'true',
     url: process.env.ANKI_URL || 'http://127.0.0.1:8765',
     deckPrefix: process.env.ANKI_DECK_PREFIX || 'SuperAnki::Books',
     model: process.env.ANKI_MODEL || 'Superanki',
     fieldFront: process.env.ANKI_FIELD_FRONT || 'Front',
     fieldBack: process.env.ANKI_FIELD_BACK || 'Back',
     key: process.env.ANKI_KEY || undefined,
-    autoLaunch: (process.env.ANKI_AUTO_LAUNCH || 'false').toLowerCase() === 'true',
   },
 });

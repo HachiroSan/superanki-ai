@@ -27,9 +27,6 @@ import path from 'node:path';
 import dotenv from 'dotenv';
 import sqlite3 from 'sqlite3';
 
-// Types from yanki-connect via type-only import
-import type { YankiConnect as YankiConnectType } from 'yanki-connect';
-
 // Load env from local .env if present
 try {
   const dotenvPath = path.join(__dirname, '.env');
@@ -54,7 +51,6 @@ const MODEL_NAME = getArg('model', 'Superanki')!;
 const DB_PATH = getArg('database-path', './data/app.db')!;
 const LIMIT = parseInt(getArg('limit', '200')!, 10);
 const ANKI_CONNECT_KEY = getArg('anki-connect-key', undefined);
-const AUTO_LAUNCH = getArg('auto-launch', 'false')!; // 'false' | 'true' | 'immediately'
 // Custom model field names (Superanki)
 const FIELD_WORD = getArg('field-word', 'Word')!;
 const FIELD_CANONICAL_ANSWER = getArg('field-canonical-answer', 'CanonicalAnswer')!;
@@ -65,16 +61,18 @@ const FIELD_EXAMPLE_SENTENCE = getArg('field-example-sentence', 'ExampleSentence
 const FIELD_SOURCE_TITLE = getArg('field-source-title', 'SourceTitle')!;
 const FIELD_HINT = getArg('field-hint', 'Hint')!;
 
-function parseHostAndPort(url: string): { host: string; port: number } {
-  try {
-    const u = new URL(url);
-    const host = `${u.protocol}//${u.hostname}`;
-    const port = u.port ? Number(u.port) : 8765;
-    return { host, port };
-  } catch {
-    // Fallback to defaults if parsing fails
-    return { host: 'http://127.0.0.1', port: 8765 };
-  }
+async function callAnki<T = any>(action: string, params: any = {}): Promise<T> {
+  const body: any = { action, version: 6, params };
+  if (ANKI_CONNECT_KEY) body.key = ANKI_CONNECT_KEY;
+  const res = await fetch(ANKI_CONNECT_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`AnkiConnect HTTP ${res.status}`);
+  const json = await res.json();
+  if (json.error) throw new Error(String(json.error));
+  return json.result as T;
 }
 
 function sanitizeDeckComponent(name: unknown): string {
@@ -141,27 +139,14 @@ function buildNote(deckName: string, row: EnrichedRow) {
   };
 }
 
-async function ensureDeck(client: YankiConnectType, deckName: string): Promise<void> {
-  // createDeck returns the ID of the deck (or creates it). No-op if exists.
-  await client.deck.createDeck({ deck: deckName });
+async function ensureDeck(deckName: string): Promise<void> {
+  await callAnki('createDeck', { deck: deckName });
 }
 
 async function main(): Promise<void> {
   console.log(`[AnkiPush] Using DB at ${DB_PATH}`);
   console.log(`[AnkiPush] Model: ${MODEL_NAME}`);
   console.log(`[AnkiPush] AnkiConnect: ${ANKI_CONNECT_URL}`);
-
-  // Lazily import ESM-only yanki-connect from CJS-compiled TS using dynamic import
-  const { YankiConnect } = (await import('yanki-connect')) as typeof import('yanki-connect');
-  const { host, port } = parseHostAndPort(ANKI_CONNECT_URL);
-  const client: YankiConnectType = new YankiConnect({
-    host,
-    port,
-    key: ANKI_CONNECT_KEY,
-    autoLaunch: (AUTO_LAUNCH === 'immediately' ? 'immediately' : AUTO_LAUNCH === 'true') as
-      | boolean
-      | 'immediately',
-  });
 
   // Read rows from DB
   const db = new sqlite3.Database(DB_PATH);
@@ -192,7 +177,7 @@ async function main(): Promise<void> {
     const book = sanitizeDeckComponent(row.source_title);
     const deckName = `${DECK_PREFIX}::${book}`;
     if (!ensuredDecks.has(deckName)) {
-      await ensureDeck(client, deckName);
+      await ensureDeck(deckName);
       ensuredDecks.add(deckName);
     }
 
@@ -207,7 +192,7 @@ async function main(): Promise<void> {
 
     let noteIds: number[] = [];
     try {
-      noteIds = await client.note.findNotes({ query });
+      noteIds = await callAnki<number[]>('findNotes', { query });
     } catch (e: any) {
       console.warn('[AnkiPush] findNotes failed:', e?.message || e);
     }
@@ -223,7 +208,7 @@ async function main(): Promise<void> {
         tags: string[];
       }> = [];
       try {
-        infos = await client.note.notesInfo({ notes: noteIds });
+        infos = await callAnki<typeof infos>('notesInfo', { notes: noteIds });
       } catch (e: any) {
         console.warn('[AnkiPush] notesInfo failed:', e?.message || e);
       }
@@ -242,7 +227,7 @@ async function main(): Promise<void> {
           }
         }
         if (changed) {
-          await client.note.updateNoteFields({
+          await callAnki('updateNoteFields', {
             note: {
               id: newest.noteId,
               fields: fieldsToUpdate,
@@ -253,7 +238,7 @@ async function main(): Promise<void> {
         // Merge tags and set
         const existingTags = Array.isArray(newest.tags) ? newest.tags : [];
         const merged = Array.from(new Set([...existingTags, ...newNote.tags]));
-        await client.note.updateNoteTags({ note: newest.noteId, tags: merged });
+        await callAnki('updateNoteTags', { note: newest.noteId, tags: merged });
 
         updated += 1;
         continue;
@@ -261,7 +246,7 @@ async function main(): Promise<void> {
     }
 
     // Create new note if none matched
-    const result = await client.note.addNote({ note: newNote });
+    const result = await callAnki<number | null>('addNote', { note: newNote });
     if (result) created += 1;
   }
 

@@ -4,6 +4,8 @@
   "main": "index.js",
   "scripts": {
     "dev": "NODE_ENV=development tsx src/index.ts",
+    "dev:reset-files": "NODE_ENV=development tsx src/cli/reset-files-table.ts && NODE_ENV=development tsx src/index.ts",
+    "push-anki": "NODE_ENV=development tsx src/cli/push-anki.ts",
     "build": "tsc",
     "start": "NODE_ENV=production node dist/index.js",
     "test": "npx jest",

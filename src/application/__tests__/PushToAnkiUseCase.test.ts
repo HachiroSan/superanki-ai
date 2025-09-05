@@ -58,7 +58,7 @@ async function initDbAt(dbPath: string) {
     const dbPath = tempDbPath();
     const book = `IT Book ${Date.now()}`;
     const word = `zz_integration_${Date.now()}`;
-    const deckPrefix = process.env.ANKI_DECK_PREFIX || 'SuperAnki::IT';
+    const deckPrefix = process.env.ANKI_DECK_PREFIX || 'SuperAnki::Test';
     const model = process.env.ANKI_MODEL || 'Superanki';
     const url = process.env.ANKI_URL || 'http://127.0.0.1:8765';
 
@@ -91,16 +91,25 @@ async function initDbAt(dbPath: string) {
     const res = await usecase.pushForSources([book]);
     expect(res.created + res.updated).toBeGreaterThanOrEqual(1);
 
-    // Verify and cleanup with real yanki-connect
-    const { YankiConnect } = (await import('yanki-connect')) as typeof import('yanki-connect');
-    const u = new URL(url);
-    const client = new YankiConnect({ host: `${u.protocol}//${u.hostname}`, port: u.port ? Number(u.port) : 8765 });
+    // Verify and cleanup via direct AnkiConnect HTTP API
+    async function callAnki<T = any>(action: string, params: any = {}): Promise<T> {
+      const body: any = { action, version: 6, params };
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(`AnkiConnect HTTP ${res.status}`);
+      const json = (await res.json()) as { error?: string; result: T };
+      if (json.error) throw new Error(String(json.error));
+      return json.result;
+    }
+
     const deckName = `${deckPrefix}::${book}`;
     const query = `deck:"${deckName}" note:"${model}" Word:"${word}"`;
-    const ids = await client.note.findNotes({ query });
+    const ids = await callAnki<number[]>('findNotes', { query });
     expect(Array.isArray(ids)).toBe(true);
     expect(ids.length).toBeGreaterThan(0);
-    await client.note.deleteNotes({ notes: ids });
+    await callAnki('deleteNotes', { notes: ids });
   });
 });
-
