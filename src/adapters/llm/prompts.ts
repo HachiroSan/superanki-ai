@@ -7,6 +7,7 @@ export function buildSystemPrompt(): string {
     'Keep outputs short, clean, and accurate.',
     'Rules:',
     '- CanonicalAnswer and Definition: one short sentence each.',
+    "- Definition must NOT include the target Word (or its inflections/derivations); use synonyms or a descriptive paraphrase instead.",
     '- partOfSpeech: noun|verb|adj|adv|prep|pron|conj|det|interj|phrase (lowercase).',
     "- ExampleSentence: simple, natural English; don't quote the book directly.",
     "- ExampleSentence may optionally be lightly grounded in the world/topic suggested by SourceTitle (generic, spoiler-free, no direct quotations).",
